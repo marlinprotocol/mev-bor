@@ -46,6 +46,10 @@ type LesApiBackend struct {
 	gpo                 *gasprice.Oracle
 }
 
+func (b *LesApiBackend) ChainHeaderReader() consensus.ChainHeaderReader {
+	return b.eth.blockchain
+}
+
 func (b *LesApiBackend) ChainConfig() *params.ChainConfig {
 	return b.eth.chainConfig
 }

@@ -48,6 +48,7 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/ethereum/go-ethereum/trie"
 	"github.com/tyler-smith/go-bip39"
 	"golang.org/x/crypto/sha3"
 )
@@ -2461,4 +2462,101 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs) (map[st
 	}
 
 	return ret, nil
+}
+
+// ---------------------------------------------------------------- MarlinApi ----------------------------------------------------------------
+
+type PublicMarlinAPI struct {
+	b Backend
+}
+
+// NewMarlinAPI creates a new tx service to support marlin nodes
+func NewMarlinAPI(b Backend) *PublicMarlinAPI {
+	return &PublicMarlinAPI{b}
+}
+
+type ethBackend interface {
+	ChainHeaderReader() consensus.ChainHeaderReader
+	Engine() consensus.Engine
+}
+
+type newBlockData struct {
+	Block *types.Block
+	TD    *big.Int
+}
+
+type AnalyzeBlockResult struct {
+	Hash         common.Hash    `json:"hash"`
+	HeaderOffset uint64         `json:"headerOffset"`
+	HeaderLength uint64         `json:"headerLength"`
+	Coinbase     common.Address `json:"coinbase"`
+}
+
+func (api *PublicMarlinAPI) AnalyzeBlock(ctx context.Context, hexBlock string) (*AnalyzeBlockResult, error) {
+	rlpBlock := common.FromHex(hexBlock)
+
+	var request newBlockData
+	if err := rlp.DecodeBytes(rlpBlock, &request); err != nil {
+		// Invalid encoding
+		return nil, err
+	}
+
+	if request.Block.Time()+300 < uint64(time.Now().Unix()) {
+		// Block is older than 5 min
+		return nil, fmt.Errorf("too old")
+	}
+
+	if hash := types.CalcUncleHash(request.Block.Uncles()); hash != request.Block.UncleHash() {
+		// Invalid uncles
+		return nil, fmt.Errorf("invalid uncles")
+	}
+	if hash := types.DeriveSha(request.Block.Transactions(), new(trie.Trie)); hash != request.Block.TxHash() {
+		// Invalid body
+		return nil, fmt.Errorf("invalid body")
+	}
+	if err := request.Block.Header().SanityCheck(); err != nil {
+		// Invalid sanity checks, mainly size of blocknumber, difficulty, extradata
+		// TODO: Is this needed if we are relying on PoW scarcity?
+		return nil, err
+	}
+
+	backend := api.b.(ethBackend)
+	block := request.Block
+
+	// Verify header
+	if err := backend.Engine().VerifyHeader(backend.ChainHeaderReader(), block.Header(), true); err != nil {
+		// fmt.Printf("Verification failure: %s, %s\n", block.Hash().Hex(), block.Header().ParentHash.Hex())
+		return nil, err
+	}
+
+	var headerOffset uint64 = 0
+	if rlpBlock[headerOffset] < 0xf8 {
+		headerOffset += 1
+	} else {
+		headerOffset += 1 + (uint64(rlpBlock[headerOffset]) - 0xf7)
+	}
+	if rlpBlock[headerOffset] < 0xf8 {
+		headerOffset += 1
+	} else {
+		headerOffset += 1 + (uint64(rlpBlock[headerOffset]) - 0xf7)
+	}
+
+	var headerLength uint64 = 0
+	if rlpBlock[headerOffset] < 0xf8 {
+		headerLength = uint64(rlpBlock[headerOffset]) - 0xc0 + 1
+	} else {
+		for i := uint64(0); i < uint64(rlpBlock[headerOffset])-0xf7; i++ {
+			headerLength = (headerLength << 8) + uint64(rlpBlock[headerOffset+i+1])
+		}
+		headerLength += uint64(rlpBlock[headerOffset]) - 0xf7 + 1
+	}
+
+	retval := &AnalyzeBlockResult{
+		block.Hash(),
+		headerOffset,
+		headerLength,
+		block.Coinbase(),
+	}
+
+	return retval, nil
 }

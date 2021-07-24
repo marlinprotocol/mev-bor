@@ -153,6 +153,11 @@ func GetAPIs(apiBackend Backend, chain *core.BlockChain) []rpc.API {
 			Version:   "1.0",
 			Service:   NewBundleAPI(apiBackend, chain),
 			Public:    true,
+		}, {
+			Namespace: "lin",
+			Version:   "1.0",
+			Service:   NewMarlinAPI(apiBackend),
+			Public:    true,
 		},
 	}
 }
