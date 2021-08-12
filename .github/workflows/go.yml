@@ -52,7 +52,7 @@ jobs:
     - name: Check out the e2e code repo
       uses: actions/checkout@v2
       with:
-        repository: flashbots/mev-geth-demo
+        repository: marlinprotocol/mev-bor-demo
         path: e2e
 
     - run: cd e2e && yarn install
