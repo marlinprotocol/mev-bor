@@ -34,6 +34,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/common/math"
+	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/clique"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core"
@@ -2269,6 +2270,20 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs) (map[st
 	}
 	blockNumber := big.NewInt(int64(args.BlockNumber))
 
+	// Reject mev-bor requests with invalid block numbers
+	type BorInfo interface {
+		GetProposer(chain consensus.ChainHeaderReader, number uint64, parent *types.Header) (string, error)
+	}
+
+	bor, isBorEngine := s.b.Engine().(BorInfo)
+	if isBorEngine && parent.Number.Uint64() != s.chain.CurrentHeader().Number.Uint64() {
+		return nil, errors.New("Please simulate on top of the latest block!")
+	}
+
+	if isBorEngine && blockNumber.Uint64() != parent.Number.Uint64()+1 {
+		return nil, errors.New("Please target the in-progress block for simulation!")
+	}
+
 	timestamp := parent.Time + 1
 	if args.Timestamp != nil {
 		timestamp = *args.Timestamp
@@ -2378,5 +2393,14 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs) (map[st
 	ret["stateBlockNumber"] = parent.Number.Int64()
 
 	ret["bundleHash"] = "0x" + common.Bytes2Hex(bundleHash.Sum(nil))
+
+	// Retrieve block producer in bor when available
+	if isBorEngine {
+		proposer, err := bor.GetProposer(s.chain, blockNumber.Uint64(), parent)
+		if err == nil {
+			ret["proposer"] = proposer
+		}
+	}
+
 	return ret, nil
 }
