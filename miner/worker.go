@@ -19,6 +19,7 @@ package miner
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"math/big"
 	"sort"
 	"sync"
@@ -652,6 +653,12 @@ func (w *worker) resultLoop() {
 			}
 			// Short circuit when receiving duplicate result caused by resubmitting.
 			if w.chain.HasBlock(block.Hash(), block.NumberU64()) {
+				continue
+			}
+			fmt.Println(block)
+			oldBlock := w.chain.GetBlockByNumber(block.NumberU64())
+			if oldBlock != nil {
+				log.Info("same block ", "height", block.NumberU64())
 				continue
 			}
 			var (
