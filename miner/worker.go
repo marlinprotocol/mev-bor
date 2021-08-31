@@ -19,7 +19,6 @@ package miner
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"math/big"
 	"sort"
 	"sync"
@@ -655,9 +654,10 @@ func (w *worker) resultLoop() {
 			if w.chain.HasBlock(block.Hash(), block.NumberU64()) {
 				continue
 			}
-			fmt.Println(block)
 			oldBlock := w.chain.GetBlockByNumber(block.NumberU64())
-			if oldBlock != nil {
+			oldBlockAuthor, _ := w.chain.Engine().Author(oldBlock.Header())
+			newBlockAuthor, _ := w.chain.Engine().Author(block.Header())
+			if oldBlock != nil && oldBlockAuthor == newBlockAuthor {
 				log.Info("same block ", "height", block.NumberU64())
 				continue
 			}
