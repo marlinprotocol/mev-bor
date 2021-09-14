@@ -518,13 +518,13 @@ func (c *Bor) snapshot(chain consensus.ChainHeaderReader, number uint64, hash co
 }
 
 // CallBundle API requires the proposer at the specified block
-func (c *Bor) GetProposer(chain consensus.ChainHeaderReader, number uint64, parent *types.Header) (string, error) {
+func (c *Bor) GetProposer(chain consensus.ChainHeaderReader, parent *types.Header) (common.Address, error) {
 	snap, err := c.snapshot(chain, parent.Number.Uint64(), parent.Hash(), nil)
 	if err != nil {
-		return "", err
+		return common.Address{}, err
 	}
 
-	return snap.ValidatorSet.GetProposer().Address.Hex(), nil
+	return snap.ValidatorSet.GetProposer().Address, nil
 }
 
 // VerifyUncles implements consensus.Engine, always returning an error for any

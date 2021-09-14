@@ -2308,8 +2308,9 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs) (map[st
 	blockNumber := big.NewInt(int64(args.BlockNumber))
 
 	// Reject mev-bor requests with invalid block numbers
+	// TODO: Add API to engine interface
 	type BorInfo interface {
-		GetProposer(chain consensus.ChainHeaderReader, number uint64, parent *types.Header) (string, error)
+		GetProposer(chain consensus.ChainHeaderReader, parent *types.Header) (common.Address, error)
 	}
 
 	bor, isBorEngine := s.b.Engine().(BorInfo)
@@ -2325,9 +2326,18 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs) (map[st
 	if args.Timestamp != nil {
 		timestamp = *args.Timestamp
 	}
-	coinbase := parent.Coinbase
+	var coinbase common.Address
 	if args.Coinbase != nil {
 		coinbase = common.HexToAddress(*args.Coinbase)
+	} else {
+		if isBorEngine {
+			coinbase, err = bor.GetProposer(s.chain, parent)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			coinbase = parent.Coinbase
+		}
 	}
 	difficulty := parent.Difficulty
 	if args.Difficulty != nil {
@@ -2444,9 +2454,9 @@ func (s *BundleAPI) CallBundle(ctx context.Context, args CallBundleArgs) (map[st
 
 	// Retrieve block producer in bor when available
 	if isBorEngine {
-		proposer, err := bor.GetProposer(s.chain, blockNumber.Uint64(), parent)
+		proposer, err := bor.GetProposer(s.chain, parent)
 		if err == nil {
-			ret["proposer"] = proposer
+			ret["proposer"] = proposer.Hex()
 		}
 	}
 
