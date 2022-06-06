@@ -1,0 +1,86 @@
+name: Go
+
+on:
+  push:
+  pull_request:
+    branches: [ master ]
+
+jobs:
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+
+    - name: Set up Go 1.x
+      uses: actions/setup-go@v2
+      with:
+        go-version: ^1.13
+      id: go
+
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v2
+
+    - name: Test
+      run: go test ./core ./miner/... ./internal/ethapi/... ./les/...
+
+    - name: Build
+      run: make geth
+
+  e2e:
+    name: End to End
+    runs-on: ubuntu-latest
+    steps:
+
+    - name: Set up Go 1.x
+      uses: actions/setup-go@v2
+      with:
+        go-version: ^1.13
+      id: go
+
+    - name: Use Node.js 12.x
+      uses: actions/setup-node@v1
+      with:
+        node-version: 12.x
+
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v2
+
+    - name: Build
+      run: make geth
+
+    - name: Check out the e2e code repo
+      uses: actions/checkout@v2
+      with:
+        repository: flashbots/mev-geth-demo
+        path: e2e
+
+    - run: cd e2e && yarn install
+    - name: Run single node e2e
+      run: |
+        cd e2e
+        GETH=`pwd`/../build/bin/geth ./run.sh &
+        sleep 15
+        yarn run demo-simple
+        yarn run e2e-reverting-bundles
+        yarn run demo-contract
+        pkill -9 geth || true
+    - name: Run private tx with two nodes
+      run: |
+        cd e2e
+        GETH=`pwd`/../build/bin/geth ./run.sh &
+        # Second node, not mining
+        P2P_PORT=30302 DATADIR=datadir2 HTTP_PORT=8546 MINER_ARGS='--nodiscover' GETH=`pwd`/../build/bin/geth ./run.sh &
+        sleep 15
+        DATADIR1=datadir DATADIR2=datadir2 GETH=`pwd`/../build/bin/geth ./peer_nodes.sh
+        sleep 15
+        yarn run demo-private-tx
+        pkill -9 geth || true
+    - name: Run megabundle-only node checking for reverts
+      run: |
+        cd e2e
+        # Disable bundle workers
+        MINER_ARGS='--miner.etherbase=0xd912aecb07e9f4e1ea8e6b4779e7fb6aa1c3e4d8 --miner.trustedrelays=0xfb11e78C4DaFec86237c2862441817701fdf197F --mine --miner.threads=2 --miner.maxmergedbundles=0' GETH=`pwd`/../build/bin/geth ./run.sh &
+        sleep 15
+        yarn run e2e-reverting-megabundle
+        pkill -9 geth || true

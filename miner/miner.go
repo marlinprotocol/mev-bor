@@ -45,21 +45,23 @@ type Backend interface {
 
 // Config is the configuration parameters of mining.
 type Config struct {
-	Etherbase  common.Address `toml:",omitempty"` // Public address for block mining rewards (default = first account)
-	Notify     []string       `toml:",omitempty"` // HTTP URL list to be notified of new work packages (only useful in ethash).
-	NotifyFull bool           `toml:",omitempty"` // Notify with pending block headers instead of work packages
-	ExtraData  hexutil.Bytes  `toml:",omitempty"` // Block extra data set by the miner
-	GasFloor   uint64         // Target gas floor for mined blocks.
-	GasCeil    uint64         // Target gas ceiling for mined blocks.
-	GasPrice   *big.Int       // Minimum gas price for mining a transaction
-	Recommit   time.Duration  // The time interval for miner to re-create mining work.
-	Noverify   bool           // Disable remote mining solution verification(only useful in ethash).
+	Etherbase        common.Address `toml:",omitempty"` // Public address for block mining rewards (default = first account)
+	Notify           []string       `toml:",omitempty"` // HTTP URL list to be notified of new work packages (only useful in ethash).
+	NotifyFull       bool           `toml:",omitempty"` // Notify with pending block headers instead of work packages
+	ExtraData        hexutil.Bytes  `toml:",omitempty"` // Block extra data set by the miner
+	GasFloor         uint64         // Target gas floor for mined blocks.
+	GasCeil          uint64         // Target gas ceiling for mined blocks.
+	GasPrice         *big.Int       // Minimum gas price for mining a transaction
+	Recommit         time.Duration  // The time interval for miner to re-create mining work.
+	Noverify         bool           // Disable remote mining solution verification(only useful in ethash).
+	MaxMergedBundles int
+	TrustedRelays    []common.Address `toml:",omitempty"` // Trusted relay addresses to receive tasks from.
 }
 
 // Miner creates blocks and searches for proof-of-work values.
 type Miner struct {
 	mux      *event.TypeMux
-	worker   *worker
+	worker   *multiWorker
 	coinbase common.Address
 	eth      Backend
 	engine   consensus.Engine
@@ -78,7 +80,7 @@ func New(eth Backend, config *Config, chainConfig *params.ChainConfig, mux *even
 		exitCh:  make(chan struct{}),
 		startCh: make(chan common.Address),
 		stopCh:  make(chan struct{}),
-		worker:  newWorker(config, chainConfig, engine, eth, mux, isLocalBlock, true),
+		worker:  newMultiWorker(config, chainConfig, engine, eth, mux, isLocalBlock, true),
 	}
 	miner.wg.Add(1)
 	go miner.update()
@@ -190,7 +192,7 @@ func (miner *Miner) SetRecommitInterval(interval time.Duration) {
 
 // Pending returns the currently pending block and associated state.
 func (miner *Miner) Pending() (*types.Block, *state.StateDB) {
-	return miner.worker.pending()
+	return miner.worker.regularWorker.pending()
 }
 
 // PendingBlock returns the currently pending block.
@@ -199,7 +201,7 @@ func (miner *Miner) Pending() (*types.Block, *state.StateDB) {
 // simultaneously, please use Pending(), as the pending state can
 // change between multiple method calls
 func (miner *Miner) PendingBlock() *types.Block {
-	return miner.worker.pendingBlock()
+	return miner.worker.regularWorker.pendingBlock()
 }
 
 // PendingBlockAndReceipts returns the currently pending block and corresponding receipts.
@@ -238,11 +240,11 @@ func (miner *Miner) DisablePreseal() {
 // GetSealingBlock retrieves a sealing block based on the given parameters.
 // The returned block is not sealed but all other fields should be filled.
 func (miner *Miner) GetSealingBlock(parent common.Hash, timestamp uint64, coinbase common.Address, random common.Hash) (*types.Block, error) {
-	return miner.worker.getSealingBlock(parent, timestamp, coinbase, random)
+	return miner.worker.regularWorker.getSealingBlock(parent, timestamp, coinbase, random)
 }
 
 // SubscribePendingLogs starts delivering logs from pending transactions
 // to the given channel.
 func (miner *Miner) SubscribePendingLogs(ch chan<- []*types.Log) event.Subscription {
-	return miner.worker.pendingLogsFeed.Subscribe(ch)
+	return miner.worker.regularWorker.pendingLogsFeed.Subscribe(ch)
 }

@@ -73,7 +73,9 @@ type Backend interface {
 	SubscribeChainSideEvent(ch chan<- core.ChainSideEvent) event.Subscription
 
 	// Transaction pool API
-	SendTx(ctx context.Context, signedTx *types.Transaction) error
+	SendTx(ctx context.Context, signedTx *types.Transaction, private bool) error
+	SendBundle(ctx context.Context, txs types.Transactions, blockNumber rpc.BlockNumber, minTimestamp uint64, maxTimestamp uint64, revertingTxHashes []common.Hash) error
+	SendMegabundle(ctx context.Context, txs types.Transactions, blockNumber rpc.BlockNumber, minTimestamp uint64, maxTimestamp uint64, revertingTxHashes []common.Hash, relayAddr common.Address) error
 	GetTransaction(ctx context.Context, txHash common.Hash) (*types.Transaction, common.Hash, uint64, uint64, error)
 	GetPoolTransactions() (types.Transactions, error)
 	GetPoolTransaction(txHash common.Hash) *types.Transaction
@@ -104,7 +106,7 @@ type Backend interface {
 	Engine() consensus.Engine
 }
 
-func GetAPIs(apiBackend Backend) []rpc.API {
+func GetAPIs(apiBackend Backend, chain *core.BlockChain) []rpc.API {
 	nonceLock := new(AddrLocker)
 	return []rpc.API{
 		{
@@ -146,6 +148,16 @@ func GetAPIs(apiBackend Backend) []rpc.API {
 			Version:   "1.0",
 			Service:   NewPrivateAccountAPI(apiBackend, nonceLock),
 			Public:    false,
+		}, {
+			Namespace: "eth",
+			Version:   "1.0",
+			Service:   NewPrivateTxBundleAPI(apiBackend),
+			Public:    true,
+		}, {
+			Namespace: "eth",
+			Version:   "1.0",
+			Service:   NewBundleAPI(apiBackend, chain),
+			Public:    true,
 		},
 	}
 }

@@ -88,8 +88,9 @@ var (
 )
 
 var (
-	evictionInterval    = time.Minute     // Time interval to check for evictable transactions
-	statsReportInterval = 8 * time.Second // Time interval to report transaction pool stats
+	evictionInterval         = time.Minute     // Time interval to check for evictable transactions
+	statsReportInterval      = 8 * time.Second // Time interval to report transaction pool stats
+	privateTxCleanupInterval = 1 * time.Hour
 )
 
 var (
@@ -164,7 +165,10 @@ type TxPoolConfig struct {
 	AccountQueue uint64 // Maximum number of non-executable transaction slots permitted per account
 	GlobalQueue  uint64 // Maximum number of non-executable transaction slots for all accounts
 
-	Lifetime time.Duration // Maximum amount of time non-executable transaction are queued
+	Lifetime          time.Duration // Maximum amount of time non-executable transaction are queued
+	PrivateTxLifetime time.Duration // Maximum amount of time to keep private transactions private
+
+	TrustedRelays []common.Address // Trusted relay addresses. Duplicated from the miner config.
 }
 
 // DefaultTxPoolConfig contains the default configurations for the transaction
@@ -181,7 +185,8 @@ var DefaultTxPoolConfig = TxPoolConfig{
 	AccountQueue: 64,
 	GlobalQueue:  1024,
 
-	Lifetime: 3 * time.Hour,
+	Lifetime:          3 * time.Hour,
+	PrivateTxLifetime: 3 * 24 * time.Hour,
 }
 
 // sanitize checks the provided user configurations and changes anything that's
@@ -220,6 +225,10 @@ func (config *TxPoolConfig) sanitize() TxPoolConfig {
 		log.Warn("Sanitizing invalid txpool lifetime", "provided", conf.Lifetime, "updated", DefaultTxPoolConfig.Lifetime)
 		conf.Lifetime = DefaultTxPoolConfig.Lifetime
 	}
+	if conf.PrivateTxLifetime < 1 {
+		log.Warn("Sanitizing invalid txpool private tx lifetime", "provided", conf.PrivateTxLifetime, "updated", DefaultTxPoolConfig.PrivateTxLifetime)
+		conf.PrivateTxLifetime = DefaultTxPoolConfig.PrivateTxLifetime
+	}
 	return conf
 }
 
@@ -251,11 +260,15 @@ type TxPool struct {
 	locals  *accountSet // Set of local transaction to exempt from eviction rules
 	journal *txJournal  // Journal of local transaction to back up to disk
 
-	pending map[common.Address]*txList   // All currently processable transactions
-	queue   map[common.Address]*txList   // Queued but non-processable transactions
-	beats   map[common.Address]time.Time // Last heartbeat from each known account
-	all     *txLookup                    // All transactions to allow lookups
-	priced  *txPricedList                // All transactions sorted by price
+	pending            map[common.Address]*txList   // All currently processable transactions
+	queue              map[common.Address]*txList   // Queued but non-processable transactions
+	beats              map[common.Address]time.Time // Last heartbeat from each known account
+	mevBundles         []types.MevBundle
+	megabundles        map[common.Address]types.MevBundle // One megabundle per each trusted relay
+	NewMegabundleHooks []func(common.Address, *types.MevBundle)
+	all                *txLookup     // All transactions to allow lookups
+	priced             *txPricedList // All transactions sorted by price
+	privateTxs         *timestampedTxHashSet
 
 	chainHeadCh     chan ChainHeadEvent
 	chainHeadSub    event.Subscription
@@ -289,7 +302,9 @@ func NewTxPool(config TxPoolConfig, chainconfig *params.ChainConfig, chain block
 		pending:         make(map[common.Address]*txList),
 		queue:           make(map[common.Address]*txList),
 		beats:           make(map[common.Address]time.Time),
+		megabundles:     make(map[common.Address]types.MevBundle),
 		all:             newTxLookup(),
+		privateTxs:      newExpiringTxHashSet(config.PrivateTxLifetime),
 		chainHeadCh:     make(chan ChainHeadEvent, chainHeadChanSize),
 		reqResetCh:      make(chan *txpoolResetRequest),
 		reqPromoteCh:    make(chan *accountSet),
@@ -340,9 +355,10 @@ func (pool *TxPool) loop() {
 	var (
 		prevPending, prevQueued, prevStales int
 		// Start the stats reporting and transaction eviction tickers
-		report  = time.NewTicker(statsReportInterval)
-		evict   = time.NewTicker(evictionInterval)
-		journal = time.NewTicker(pool.config.Rejournal)
+		report    = time.NewTicker(statsReportInterval)
+		evict     = time.NewTicker(evictionInterval)
+		journal   = time.NewTicker(pool.config.Rejournal)
+		privateTx = time.NewTicker(privateTxCleanupInterval)
 		// Track the previous head headers for transaction reorgs
 		head = pool.chain.CurrentBlock()
 	)
@@ -406,6 +422,10 @@ func (pool *TxPool) loop() {
 				}
 				pool.mu.Unlock()
 			}
+
+			// Remove stale hashes that must be kept private
+		case <-privateTx.C:
+			pool.privateTxs.prune()
 		}
 	}
 }
@@ -526,6 +546,11 @@ func (pool *TxPool) ContentFrom(addr common.Address) (types.Transactions, types.
 	return pending, queued
 }
 
+// IsPrivateTxHash indicates whether the transaction should be shared with peers
+func (pool *TxPool) IsPrivateTxHash(hash common.Hash) bool {
+	return pool.privateTxs.Contains(hash)
+}
+
 // Pending retrieves all currently processable transactions, grouped by origin
 // account and sorted by nonce. The returned transaction set is a copy and can be
 // freely modified by calling code.
@@ -555,6 +580,112 @@ func (pool *TxPool) Pending(enforceTips bool) map[common.Address]types.Transacti
 		}
 	}
 	return pending
+}
+
+/// AllMevBundles returns all the MEV Bundles currently in the pool
+func (pool *TxPool) AllMevBundles() []types.MevBundle {
+	return pool.mevBundles
+}
+
+// MevBundles returns a list of bundles valid for the given blockNumber/blockTimestamp
+// also prunes bundles that are outdated
+func (pool *TxPool) MevBundles(blockNumber *big.Int, blockTimestamp uint64) ([]types.MevBundle, error) {
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
+
+	// returned values
+	var ret []types.MevBundle
+	// rolled over values
+	var bundles []types.MevBundle
+
+	for _, bundle := range pool.mevBundles {
+		// Prune outdated bundles
+		if (bundle.MaxTimestamp != 0 && blockTimestamp > bundle.MaxTimestamp) || blockNumber.Cmp(bundle.BlockNumber) > 0 {
+			continue
+		}
+
+		// Roll over future bundles
+		if (bundle.MinTimestamp != 0 && blockTimestamp < bundle.MinTimestamp) || blockNumber.Cmp(bundle.BlockNumber) < 0 {
+			bundles = append(bundles, bundle)
+			continue
+		}
+
+		// return the ones which are in time
+		ret = append(ret, bundle)
+		// keep the bundles around internally until they need to be pruned
+		bundles = append(bundles, bundle)
+	}
+
+	pool.mevBundles = bundles
+	return ret, nil
+}
+
+// AddMevBundle adds a mev bundle to the pool
+func (pool *TxPool) AddMevBundle(txs types.Transactions, blockNumber *big.Int, minTimestamp, maxTimestamp uint64, revertingTxHashes []common.Hash) error {
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
+
+	pool.mevBundles = append(pool.mevBundles, types.MevBundle{
+		Txs:               txs,
+		BlockNumber:       blockNumber,
+		MinTimestamp:      minTimestamp,
+		MaxTimestamp:      maxTimestamp,
+		RevertingTxHashes: revertingTxHashes,
+	})
+	return nil
+}
+
+// AddMegaBundle adds a megabundle to the pool. Assumes the relay signature has been verified already.
+func (pool *TxPool) AddMegabundle(relayAddr common.Address, txs types.Transactions, blockNumber *big.Int, minTimestamp, maxTimestamp uint64, revertingTxHashes []common.Hash) error {
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
+
+	fromTrustedRelay := false
+	for _, trustedAddr := range pool.config.TrustedRelays {
+		if relayAddr == trustedAddr {
+			fromTrustedRelay = true
+		}
+	}
+	if !fromTrustedRelay {
+		return errors.New("megabundle from non-trusted address")
+	}
+
+	megabundle := types.MevBundle{
+		Txs:               txs,
+		BlockNumber:       blockNumber,
+		MinTimestamp:      minTimestamp,
+		MaxTimestamp:      maxTimestamp,
+		RevertingTxHashes: revertingTxHashes,
+	}
+
+	pool.megabundles[relayAddr] = megabundle
+
+	for _, hook := range pool.NewMegabundleHooks {
+		go hook(relayAddr, &megabundle)
+	}
+
+	return nil
+}
+
+// GetMegabundle returns the latest megabundle submitted by a given relay.
+func (pool *TxPool) GetMegabundle(relayAddr common.Address, blockNumber *big.Int, blockTimestamp uint64) (types.MevBundle, error) {
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
+
+	megabundle, ok := pool.megabundles[relayAddr]
+	if !ok {
+		return types.MevBundle{}, errors.New("No megabundle found")
+	}
+	if megabundle.BlockNumber.Cmp(blockNumber) != 0 {
+		return types.MevBundle{}, errors.New("Megabundle does not fit blockNumber constraints")
+	}
+	if megabundle.MinTimestamp != 0 && megabundle.MinTimestamp > blockTimestamp {
+		return types.MevBundle{}, errors.New("Megabundle does not fit minTimestamp constraints")
+	}
+	if megabundle.MaxTimestamp != 0 && megabundle.MaxTimestamp < blockTimestamp {
+		return types.MevBundle{}, errors.New("Megabundle does not fit maxTimestamp constraints")
+	}
+	return megabundle, nil
 }
 
 // Locals retrieves the accounts currently considered local by the pool.
@@ -846,7 +977,7 @@ func (pool *TxPool) promoteTx(addr common.Address, hash common.Hash, tx *types.T
 // This method is used to add transactions from the RPC API and performs synchronous pool
 // reorganization and event propagation.
 func (pool *TxPool) AddLocals(txs []*types.Transaction) []error {
-	return pool.addTxs(txs, !pool.config.NoLocals, true)
+	return pool.addTxs(txs, !pool.config.NoLocals, true, false)
 }
 
 // AddLocal enqueues a single local transaction into the pool if it is valid. This is
@@ -862,12 +993,18 @@ func (pool *TxPool) AddLocal(tx *types.Transaction) error {
 // This method is used to add transactions from the p2p network and does not wait for pool
 // reorganization and internal event propagation.
 func (pool *TxPool) AddRemotes(txs []*types.Transaction) []error {
-	return pool.addTxs(txs, false, false)
+	return pool.addTxs(txs, false, false, false)
+}
+
+// AddPrivateRemote adds transactions to the pool, but does not broadcast these transactions to any peers.
+func (pool *TxPool) AddPrivateRemote(tx *types.Transaction) error {
+	errs := pool.addTxs([]*types.Transaction{tx}, false, false, true)
+	return errs[0]
 }
 
 // This is like AddRemotes, but waits for pool reorganization. Tests use this method.
 func (pool *TxPool) AddRemotesSync(txs []*types.Transaction) []error {
-	return pool.addTxs(txs, false, true)
+	return pool.addTxs(txs, false, true, false)
 }
 
 // This is like AddRemotes with a single transaction, but waits for pool reorganization. Tests use this method.
@@ -886,7 +1023,7 @@ func (pool *TxPool) AddRemote(tx *types.Transaction) error {
 }
 
 // addTxs attempts to queue a batch of transactions if they are valid.
-func (pool *TxPool) addTxs(txs []*types.Transaction, local, sync bool) []error {
+func (pool *TxPool) addTxs(txs []*types.Transaction, local, sync, private bool) []error {
 	// Filter out known ones without obtaining the pool lock or recovering signatures
 	var (
 		errs = make([]error, len(txs))
@@ -913,6 +1050,13 @@ func (pool *TxPool) addTxs(txs []*types.Transaction, local, sync bool) []error {
 	}
 	if len(news) == 0 {
 		return errs
+	}
+
+	// Track private transactions, so they don't get leaked to the public mempool
+	if private {
+		for _, tx := range news {
+			pool.privateTxs.Add(tx.Hash())
+		}
 	}
 
 	// Process all the new transaction and merge any errors into the original slice
@@ -1215,7 +1359,11 @@ func (pool *TxPool) runReorg(done chan struct{}, reset *txpoolResetRequest, dirt
 	if len(events) > 0 {
 		var txs []*types.Transaction
 		for _, set := range events {
-			txs = append(txs, set.Flatten()...)
+			for _, tx := range set.Flatten() {
+				if !pool.IsPrivateTxHash(tx.Hash()) {
+					txs = append(txs, tx)
+				}
+			}
 		}
 		pool.txFeed.Send(NewTxsEvent{txs})
 	}
@@ -1527,6 +1675,7 @@ func (pool *TxPool) demoteUnexecutables() {
 		for _, tx := range olds {
 			hash := tx.Hash()
 			pool.all.Remove(hash)
+			pool.privateTxs.Remove(hash)
 			log.Trace("Removed old pending transaction", "hash", hash)
 		}
 		// Drop all transactions that are too costly (low balance or out of gas), and queue any invalids back for later
@@ -1827,6 +1976,60 @@ func (t *txLookup) RemotesBelowTip(threshold *big.Int) types.Transactions {
 		return true
 	}, false, true) // Only iterate remotes
 	return found
+}
+
+type timestampedTxHashSet struct {
+	lock       sync.RWMutex
+	timestamps map[common.Hash]time.Time
+	ttl        time.Duration
+}
+
+func newExpiringTxHashSet(ttl time.Duration) *timestampedTxHashSet {
+	s := &timestampedTxHashSet{
+		timestamps: make(map[common.Hash]time.Time),
+		ttl:        ttl,
+	}
+
+	return s
+}
+
+func (s *timestampedTxHashSet) Add(hash common.Hash) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	_, ok := s.timestamps[hash]
+	if !ok {
+		s.timestamps[hash] = time.Now().Add(s.ttl)
+	}
+}
+
+func (s *timestampedTxHashSet) Contains(hash common.Hash) bool {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+	_, ok := s.timestamps[hash]
+	return ok
+}
+
+func (s *timestampedTxHashSet) Remove(hash common.Hash) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	_, ok := s.timestamps[hash]
+	if ok {
+		delete(s.timestamps, hash)
+	}
+}
+
+func (s *timestampedTxHashSet) prune() {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	now := time.Now()
+	for hash, ts := range s.timestamps {
+		if ts.Before(now) {
+			delete(s.timestamps, hash)
+		}
+	}
 }
 
 // numSlots calculates the number of slots needed for a single transaction.

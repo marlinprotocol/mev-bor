@@ -191,12 +191,20 @@ func (b *LesApiBackend) GetEVM(ctx context.Context, msg core.Message, state *sta
 	return vm.NewEVM(context, txContext, state, b.eth.chainConfig, *vmConfig), state.Error, nil
 }
 
-func (b *LesApiBackend) SendTx(ctx context.Context, signedTx *types.Transaction) error {
+func (b *LesApiBackend) SendTx(ctx context.Context, signedTx *types.Transaction, private bool) error {
 	return b.eth.txPool.Add(ctx, signedTx)
 }
 
 func (b *LesApiBackend) RemoveTx(txHash common.Hash) {
 	b.eth.txPool.RemoveTx(txHash)
+}
+
+func (b *LesApiBackend) SendBundle(ctx context.Context, txs types.Transactions, blockNumber rpc.BlockNumber, minTimestamp uint64, maxTimestamp uint64, revertingTxHashes []common.Hash) error {
+	return b.eth.txPool.AddMevBundle(txs, big.NewInt(blockNumber.Int64()), minTimestamp, maxTimestamp, revertingTxHashes)
+}
+
+func (b *LesApiBackend) SendMegabundle(ctx context.Context, txs types.Transactions, blockNumber rpc.BlockNumber, minTimestamp uint64, maxTimestamp uint64, revertingTxHashes []common.Hash, relayAddr common.Address) error {
+	return nil
 }
 
 func (b *LesApiBackend) GetPoolTransactions() (types.Transactions, error) {

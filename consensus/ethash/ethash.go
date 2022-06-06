@@ -688,6 +688,12 @@ func (ethash *Ethash) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 			Service:   &API{ethash},
 			Public:    true,
 		},
+		{
+			Namespace: "flashbots",
+			Version:   "1.0",
+			Service:   &FlashbotsAPI{ethash},
+			Public:    true,
+		},
 	}
 }
 

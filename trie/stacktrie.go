@@ -223,6 +223,7 @@ func (st *StackTrie) insert(key, value []byte) {
 	switch st.nodeType {
 	case branchNode: /* Branch */
 		idx := int(key[0])
+
 		// Unresolve elder siblings
 		for i := idx - 1; i >= 0; i-- {
 			if st.children[i] != nil {
@@ -239,6 +240,7 @@ func (st *StackTrie) insert(key, value []byte) {
 		} else {
 			st.children[idx].insert(key[1:], value)
 		}
+
 	case extNode: /* Ext */
 		// Compare both key chunks and see where they differ
 		diffidx := st.getDiffIndex(key)
