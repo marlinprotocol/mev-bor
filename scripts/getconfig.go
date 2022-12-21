@@ -81,6 +81,7 @@ var flagMap = map[string][]string{
 	"miner.notify":                     {"notABoolFlag", "No"},
 	"miner.notify.full":                {"BoolFlag", "No"},
 	"miner.recommit":                   {"notABoolFlag", "No"},
+	"miner.maxmergedbundles":           {"notABoolFlag", "No"},
 	"miner.noverify":                   {"BoolFlag", "No"},
 	"vmdebug":                          {"BoolFlag", "No"},
 	"fakepow":                          {"BoolFlag", "No"},
