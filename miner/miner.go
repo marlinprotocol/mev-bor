@@ -55,6 +55,7 @@ type Config struct {
 	Recommit            time.Duration  // The time interval for miner to re-create mining work.
 	Noverify            bool           // Disable remote mining solution verification(only useful in ethash).
 	CommitInterruptFlag bool           // Interrupt commit when time is up ( default = true)
+	MaxMergedBundles    int
 }
 
 // Miner creates blocks and searches for proof-of-work values.
