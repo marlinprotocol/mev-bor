@@ -229,6 +229,13 @@ func (c *Command) Flags() *flagset.Flagset {
 		Group:   "Sealer",
 		Default: c.cliConfig.Sealer.GasPrice,
 	})
+	f.Uint64Flag(&flagset.Uint64Flag{
+		Name:    "miner.maxmergedbundles",
+		Usage:   "flashbots - The maximum amount of bundles to merge. The miner will run this many workers in parallel to calculate if the full block is more profitable with these additional bundles.",
+		Value:   &c.cliConfig.Sealer.MaxMergedBundles,
+		Default: c.cliConfig.Sealer.MaxMergedBundles,
+		Group:   "Sealer",
+	})
 
 	// ethstats
 	f.StringFlag(&flagset.StringFlag{

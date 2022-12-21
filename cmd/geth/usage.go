@@ -196,6 +196,7 @@ var AppHelpFlagGroups = []flags.FlagGroup{
 			utils.MinerEtherbaseFlag,
 			utils.MinerExtraDataFlag,
 			utils.MinerRecommitIntervalFlag,
+			utils.MinerMaxMergedBundlesFlag,
 			utils.MinerNoVerifyFlag,
 		},
 	},
