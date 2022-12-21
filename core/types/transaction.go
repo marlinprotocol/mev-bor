@@ -588,3 +588,11 @@ func (s *TxByPriceAndTime) Pop() interface{} {
 
 	return x
 }
+
+type MevBundle struct {
+	Txs               Transactions
+	BlockNumber       *big.Int
+	MinTimestamp      uint64
+	MaxTimestamp      uint64
+	RevertingTxHashes []common.Hash
+}
