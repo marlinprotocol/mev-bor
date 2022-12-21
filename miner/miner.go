@@ -53,6 +53,7 @@ type Config struct {
 	GasCeil             uint64         // Target gas ceiling for mined blocks.
 	GasPrice            *big.Int       // Minimum gas price for mining a transaction
 	Recommit            time.Duration  // The time interval for miner to re-create mining work.
+	MaxMergedBundles    uint64         // Maximum number of flashbots workers
 	Noverify            bool           // Disable remote mining solution verification(only useful in ethash).
 	CommitInterruptFlag bool           // Interrupt commit when time is up ( default = true)
 
