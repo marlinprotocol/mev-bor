@@ -323,6 +323,9 @@ type SealerConfig struct {
 	RecommitRaw string        `hcl:"recommit,optional" toml:"recommit,optional"`
 
 	CommitInterruptFlag bool `hcl:"commitinterrupt,optional" toml:"commitinterrupt,optional"`
+
+	// maximum MEV workers
+	MaxMergedBundles uint64 `hcl:"maxmergedbundles,optional" toml:"maxmergedbundles,optional`
 }
 
 type JsonRPCConfig struct {
@@ -663,6 +666,7 @@ func DefaultConfig() *Config {
 			ExtraData:           "",
 			Recommit:            125 * time.Second,
 			CommitInterruptFlag: true,
+			MaxMergedBundles:    3,
 		},
 		Gpo: &GpoConfig{
 			Blocks:           20,
@@ -964,6 +968,7 @@ func (c *Config) buildEth(stack *node.Node, accountManager *accounts.Manager) (*
 		n.Miner.GasCeil = c.Sealer.GasCeil
 		n.Miner.ExtraData = []byte(c.Sealer.ExtraData)
 		n.Miner.CommitInterruptFlag = c.Sealer.CommitInterruptFlag
+		n.Miner.MaxMergedBundles = c.Sealer.MaxMergedBundles
 
 		if etherbase := c.Sealer.Etherbase; etherbase != "" {
 			if !common.IsHexAddress(etherbase) {
