@@ -306,6 +306,9 @@ type SealerConfig struct {
 	// The time interval for miner to re-create mining work.
 	Recommit    time.Duration `hcl:"-,optional" toml:"-"`
 	RecommitRaw string        `hcl:"recommit,optional" toml:"recommit,optional"`
+
+	// maximum MEV workers
+	MaxMergedBundles uint64 `hcl:"maxmergedbundles,optional" toml:"maxmergedbundles,optional`
 }
 
 type JsonRPCConfig struct {
@@ -622,12 +625,13 @@ func DefaultConfig() *Config {
 			LifeTime:     3 * time.Hour,
 		},
 		Sealer: &SealerConfig{
-			Enabled:   false,
-			Etherbase: "",
-			GasCeil:   30_000_000,                  // geth's default
-			GasPrice:  big.NewInt(1 * params.GWei), // geth's default
-			ExtraData: "",
-			Recommit:  125 * time.Second,
+			Enabled:          false,
+			Etherbase:        "",
+			GasCeil:          30_000_000,                  // geth's default
+			GasPrice:         big.NewInt(1 * params.GWei), // geth's default
+			ExtraData:        "",
+			Recommit:         125 * time.Second,
+			MaxMergedBundles: 3,
 		},
 		Gpo: &GpoConfig{
 			Blocks:           20,
@@ -916,6 +920,7 @@ func (c *Config) buildEth(stack *node.Node, accountManager *accounts.Manager) (*
 		n.Miner.GasPrice = c.Sealer.GasPrice
 		n.Miner.GasCeil = c.Sealer.GasCeil
 		n.Miner.ExtraData = []byte(c.Sealer.ExtraData)
+		n.Miner.MaxMergedBundles = int(c.Sealer.MaxMergedBundles)
 
 		if etherbase := c.Sealer.Etherbase; etherbase != "" {
 			if !common.IsHexAddress(etherbase) {
