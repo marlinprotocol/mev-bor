@@ -72,6 +72,9 @@ type TxPool struct {
 
 	subs event.SubscriptionScope // Subscription scope to unsubscribe all on shutdown
 	quit chan chan error         // Quit channel to tear down the head updater
+
+	mevBundles []types.MevBundle
+	mu         sync.Mutex // Lock protecting the bundles
 }
 
 // New creates a new transaction pool to gather, sort and filter inbound
@@ -386,6 +389,59 @@ func (p *TxPool) ContentFrom(addr common.Address) ([]*types.Transaction, []*type
 		}
 	}
 	return []*types.Transaction{}, []*types.Transaction{}
+}
+
+// / AllMevBundles returns all the MEV Bundles currently in the pool
+func (pool *TxPool) AllMevBundles() []types.MevBundle {
+	return pool.mevBundles
+}
+
+// MevBundles returns a list of bundles valid for the given blockNumber/blockTimestamp
+// also prunes bundles that are outdated
+func (pool *TxPool) MevBundles(blockNumber *big.Int, blockTimestamp uint64) ([]types.MevBundle, error) {
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
+
+	// returned values
+	var ret []types.MevBundle
+	// rolled over values
+	var bundles []types.MevBundle
+
+	for _, bundle := range pool.mevBundles {
+		// Prune outdated bundles
+		if (bundle.MaxTimestamp != 0 && blockTimestamp > bundle.MaxTimestamp) || blockNumber.Cmp(bundle.BlockNumber) > 0 {
+			continue
+		}
+
+		// Roll over future bundles
+		if (bundle.MinTimestamp != 0 && blockTimestamp < bundle.MinTimestamp) || blockNumber.Cmp(bundle.BlockNumber) < 0 {
+			bundles = append(bundles, bundle)
+			continue
+		}
+
+		// return the ones which are in time
+		ret = append(ret, bundle)
+		// keep the bundles around internally until they need to be pruned
+		bundles = append(bundles, bundle)
+	}
+
+	pool.mevBundles = bundles
+	return ret, nil
+}
+
+// AddMevBundle adds a mev bundle to the pool
+func (pool *TxPool) AddMevBundle(txs types.Transactions, blockNumber *big.Int, minTimestamp, maxTimestamp uint64, revertingTxHashes []common.Hash) error {
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
+
+	pool.mevBundles = append(pool.mevBundles, types.MevBundle{
+		Txs:               txs,
+		BlockNumber:       blockNumber,
+		MinTimestamp:      minTimestamp,
+		MaxTimestamp:      maxTimestamp,
+		RevertingTxHashes: revertingTxHashes,
+	})
+	return nil
 }
 
 // Locals retrieves the accounts currently considered local by the pool.
