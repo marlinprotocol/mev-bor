@@ -795,3 +795,11 @@ func copyAddressPtr(a *common.Address) *common.Address {
 
 	return &cpy
 }
+
+type MevBundle struct {
+	Txs               Transactions
+	BlockNumber       *big.Int
+	MinTimestamp      uint64
+	MaxTimestamp      uint64
+	RevertingTxHashes []common.Hash
+}
