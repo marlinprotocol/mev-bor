@@ -52,6 +52,7 @@ type Config struct {
 	GasCeil             uint64         // Target gas ceiling for mined blocks.
 	GasPrice            *big.Int       // Minimum gas price for mining a transaction
 	Recommit            time.Duration  // The time interval for miner to re-create mining work.
+	MaxMergedBundles    uint64         // Maximum number of flashbots workers
 	CommitInterruptFlag bool           // Interrupt commit when time is up ( default = true)
 
 	NewPayloadTimeout time.Duration // The maximum time allowance for creating a new payload
@@ -67,6 +68,7 @@ var DefaultConfig = Config{
 	// for payload generation. It should be enough for Geth to
 	// run 3 rounds.
 	Recommit:          2 * time.Second,
+	MaxMergedBundles:  3,
 	NewPayloadTimeout: 2 * time.Second,
 }
 

@@ -519,6 +519,12 @@ var (
 		Value:    ethconfig.Defaults.Miner.Recommit,
 		Category: flags.MinerCategory,
 	}
+	MinerMaxMergedBundlesFlag = cli.Uint64Flag{
+		Name:     "miner.maxmergedbundles",
+		Usage:    "flashbots - The maximum amount of bundles to merge. The miner will run this many workers in parallel to calculate if the full block is more profitable with these additional bundles.",
+		Value:    ethconfig.Defaults.Miner.MaxMergedBundles,
+		Category: flags.MinerCategory,
+	}
 	MinerNewPayloadTimeout = &cli.DurationFlag{
 		Name:     "miner.newpayload-timeout",
 		Usage:    "Specify the maximum time allowance for creating a new payload",
@@ -1656,6 +1662,8 @@ func setMiner(ctx *cli.Context, cfg *miner.Config) {
 	if ctx.IsSet(MinerNewPayloadTimeout.Name) {
 		cfg.NewPayloadTimeout = ctx.Duration(MinerNewPayloadTimeout.Name)
 	}
+
+	cfg.MaxMergedBundles = ctx.Uint64(MinerMaxMergedBundlesFlag.Name)
 }
 
 func setRequiredBlocks(ctx *cli.Context, cfg *ethconfig.Config) {
