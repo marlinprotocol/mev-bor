@@ -157,6 +157,11 @@ func GetAPIs(apiBackend Backend, chain *core.BlockChain) []rpc.API {
 			Version:   "1.0",
 			Service:   NewPrivateTxBundleAPI(apiBackend, chain),
 			Public:    false,
+		}, {
+			Namespace: "eth",
+			Version:   "1.0",
+			Service:   NewPrivateTxBundleAPI(apiBackend, chain),
+			Public:    true,
 		},
 	}
 }
