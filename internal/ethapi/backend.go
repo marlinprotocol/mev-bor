@@ -142,6 +142,9 @@ func GetAPIs(apiBackend Backend, chain *core.BlockChain) []rpc.API {
 		}, {
 			Namespace: "mev",
 			Service:   NewPrivateTxBundleAPI(apiBackend, chain),
+		}, {
+			Namespace: "eth",
+			Service:   NewPrivateTxBundleAPI(apiBackend, chain),
 		},
 	}
 }
