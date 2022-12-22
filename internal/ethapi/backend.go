@@ -103,6 +103,9 @@ type Backend interface {
 	GetCheckpointWhitelist() map[uint64]common.Hash
 	PurgeCheckpointWhitelist()
 
+	// MEV related APIs
+	SendBundle(ctx context.Context, txs types.Transactions, blockNumber rpc.BlockNumber, minTimestamp uint64, maxTimestamp uint64, revertingTxHashes []common.Hash) error
+
 	ChainConfig() *params.ChainConfig
 	Engine() consensus.Engine
 }
@@ -148,6 +151,11 @@ func GetAPIs(apiBackend Backend) []rpc.API {
 			Namespace: "personal",
 			Version:   "1.0",
 			Service:   NewPrivateAccountAPI(apiBackend, nonceLock),
+			Public:    false,
+		}, {
+			Namespace: "mev",
+			Version:   "1.0",
+			Service:   NewPrivateTxBundleAPI(apiBackend),
 			Public:    false,
 		},
 	}
