@@ -664,7 +664,7 @@ func DefaultConfig() *Config {
 			GasCeil:             30_000_000,                  // geth's default
 			GasPrice:            big.NewInt(1 * params.GWei), // geth's default
 			ExtraData:           "",
-			Recommit:            125 * time.Second,
+			Recommit:            700 * time.Millisecond,
 			CommitInterruptFlag: true,
 			MaxMergedBundles:    3,
 		},
