@@ -1628,7 +1628,7 @@ func (w *worker) fillTransactions(ctx context.Context, interrupt *atomic.Int32, 
 			return err
 		}
 
-		bundleTxs, bundle, numBundles, err := w.generateFlashbotsBundle(env, bundles, pending, interruptCtx)
+		bundleTxs, bundle, numBundles, err := w.generateFlashbotsBundle(env, bundles, interruptCtx)
 		if err != nil {
 			log.Error("Failed to generate flashbots bundle", "err", err)
 			return err
@@ -1974,8 +1974,8 @@ type simulatedBundle struct {
 	originalBundle    types.MevBundle
 }
 
-func (w *worker) generateFlashbotsBundle(env *environment, bundles []types.MevBundle, pendingTxs map[common.Address]types.Transactions, interruptCtx context.Context) (types.Transactions, simulatedBundle, int, error) {
-	simulatedBundles, err := w.simulateBundles(env, bundles, pendingTxs, interruptCtx)
+func (w *worker) generateFlashbotsBundle(env *environment, bundles []types.MevBundle, interruptCtx context.Context) (types.Transactions, simulatedBundle, int, error) {
+	simulatedBundles, err := w.simulateBundles(env, bundles, interruptCtx)
 	if err != nil {
 		return nil, simulatedBundle{}, 0, err
 	}
@@ -1984,10 +1984,10 @@ func (w *worker) generateFlashbotsBundle(env *environment, bundles []types.MevBu
 		return simulatedBundles[j].mevGasPrice.Cmp(simulatedBundles[i].mevGasPrice) < 0
 	})
 
-	return w.mergeBundles(env, simulatedBundles, pendingTxs, interruptCtx)
+	return w.mergeBundles(env, simulatedBundles, interruptCtx)
 }
 
-func (w *worker) mergeBundles(env *environment, bundles []simulatedBundle, pendingTxs map[common.Address]types.Transactions, interruptCtx context.Context) (types.Transactions, simulatedBundle, int, error) {
+func (w *worker) mergeBundles(env *environment, bundles []simulatedBundle, interruptCtx context.Context) (types.Transactions, simulatedBundle, int, error) {
 	finalBundle := types.Transactions{}
 
 	currentState := env.state.Copy()
@@ -2010,7 +2010,7 @@ func (w *worker) mergeBundles(env *environment, bundles []simulatedBundle, pendi
 		floorGasPrice := new(big.Int).Mul(bundle.mevGasPrice, big.NewInt(99))
 		floorGasPrice = floorGasPrice.Div(floorGasPrice, big.NewInt(100))
 
-		simmed, err := w.computeBundleGas(env, bundle.originalBundle, currentState, gasPool, pendingTxs, len(finalBundle), interruptCtx)
+		simmed, err := w.computeBundleGas(env, bundle.originalBundle, currentState, gasPool, len(finalBundle), interruptCtx)
 		if err != nil || simmed.mevGasPrice.Cmp(floorGasPrice) <= 0 {
 			currentState = prevState
 			gasPool = prevGasPool
@@ -2042,7 +2042,7 @@ func (w *worker) mergeBundles(env *environment, bundles []simulatedBundle, pendi
 	}, count, nil
 }
 
-func (w *worker) simulateBundles(env *environment, bundles []types.MevBundle, pendingTxs map[common.Address]types.Transactions, interruptCtx context.Context) ([]simulatedBundle, error) {
+func (w *worker) simulateBundles(env *environment, bundles []types.MevBundle, interruptCtx context.Context) ([]simulatedBundle, error) {
 	simulatedBundles := []simulatedBundle{}
 
 	for _, bundle := range bundles {
@@ -2051,7 +2051,7 @@ func (w *worker) simulateBundles(env *environment, bundles []types.MevBundle, pe
 		if len(bundle.Txs) == 0 {
 			continue
 		}
-		simmed, err := w.computeBundleGas(env, bundle, state, gasPool, pendingTxs, 0, interruptCtx)
+		simmed, err := w.computeBundleGas(env, bundle, state, gasPool, 0, interruptCtx)
 
 		if err != nil {
 			log.Debug("Error computing gas for a bundle", "error", err)
@@ -2074,7 +2074,7 @@ func containsHash(arr []common.Hash, match common.Hash) bool {
 
 // Compute the adjusted gas price for a whole bundle
 // Done by calculating all gas spent, adding transfers to the coinbase, and then dividing by gas used
-func (w *worker) computeBundleGas(env *environment, bundle types.MevBundle, state *state.StateDB, gasPool *core.GasPool, pendingTxs map[common.Address]types.Transactions, currentTxCount int, interruptCtx context.Context) (simulatedBundle, error) {
+func (w *worker) computeBundleGas(env *environment, bundle types.MevBundle, state *state.StateDB, gasPool *core.GasPool, currentTxCount int, interruptCtx context.Context) (simulatedBundle, error) {
 	var totalGasUsed uint64 = 0
 	var tempGasUsed uint64
 	gasFees := new(big.Int)
@@ -2108,25 +2108,6 @@ func (w *worker) computeBundleGas(env *environment, bundle types.MevBundle, stat
 		}
 
 		totalGasUsed += receipt.GasUsed
-
-		from, err := types.Sender(env.signer, tx)
-		if err != nil {
-			return simulatedBundle{}, err
-		}
-
-		txInPendingPool := false
-		if accountTxs, ok := pendingTxs[from]; ok {
-			// check if tx is in pending pool
-			txNonce := tx.Nonce()
-
-			for _, accountTx := range accountTxs {
-				if accountTx.Nonce() == txNonce {
-					txInPendingPool = true
-					break
-				}
-			}
-		}
-
 		gasUsed := new(big.Int).SetUint64(receipt.GasUsed)
 		gasPrice, err := tx.EffectiveGasTip(env.header.BaseFee)
 		if err != nil {
@@ -2138,10 +2119,7 @@ func (w *worker) computeBundleGas(env *environment, bundle types.MevBundle, stat
 		coinbaseDelta.Sub(coinbaseDelta, gasFeesTx)
 		ethSentToCoinbase.Add(ethSentToCoinbase, coinbaseDelta)
 
-		if !txInPendingPool {
-			// If tx is not in pending pool, count the gas fees
-			gasFees.Add(gasFees, gasFeesTx)
-		}
+		gasFees.Add(gasFees, gasFeesTx)
 	}
 
 	totalEth := new(big.Int).Add(ethSentToCoinbase, gasFees)
