@@ -109,6 +109,9 @@ type Backend interface {
 	SubscribeChain2HeadEvent(ch chan<- core.Chain2HeadEvent) event.Subscription
 	GetCheckpointWhitelist() map[uint64]common.Hash
 	PurgeCheckpointWhitelist()
+
+	// MEV related APIs
+	SendBundle(ctx context.Context, txs types.Transactions, blockNumber rpc.BlockNumber, minTimestamp uint64, maxTimestamp uint64, revertingTxHashes []common.Hash) error
 }
 
 func GetAPIs(apiBackend Backend) []rpc.API {
@@ -136,6 +139,9 @@ func GetAPIs(apiBackend Backend) []rpc.API {
 		}, {
 			Namespace: "personal",
 			Service:   NewPersonalAccountAPI(apiBackend, nonceLock),
+		}, {
+			Namespace: "mev",
+			Service:   NewPrivateTxBundleAPI(apiBackend),
 		},
 	}
 }
