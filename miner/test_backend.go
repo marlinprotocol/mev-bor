@@ -174,7 +174,10 @@ func NewTestWorker(t TensingObject, chainConfig *params.ChainConfig, engine cons
 	backend.txPool.AddLocals(pendingTxs)
 
 	//nolint:staticcheck
-	w := newWorker(testConfig, chainConfig, engine, backend, new(event.TypeMux), nil, false)
+	w := newWorker(testConfig, chainConfig, engine, backend, new(event.TypeMux), nil, false, &flashbotsData{
+		isFlashbots: false,
+		queue:       nil,
+	})
 
 	w.setEtherbase(TestBankAddress)
 
