@@ -322,10 +322,16 @@ func newTestWorker(t TensingObject, chainConfig *params.ChainConfig, engine cons
 	var w *worker
 	if delay != 0 || opcodeDelay != 0 {
 		//nolint:staticcheck
-		w = newWorkerWithDelay(testConfig, chainConfig, engine, backend, new(event.TypeMux), nil, false, delay, opcodeDelay)
+		w = newWorkerWithDelay(testConfig, chainConfig, engine, backend, new(event.TypeMux), nil, false, delay, opcodeDelay, &flashbotsData{
+			isFlashbots: false,
+			queue:       nil,
+		})
 	} else {
 		//nolint:staticcheck
-		w = newWorker(testConfig, chainConfig, engine, backend, new(event.TypeMux), nil, false)
+		w = newWorker(testConfig, chainConfig, engine, backend, new(event.TypeMux), nil, false, &flashbotsData{
+			isFlashbots: false,
+			queue:       nil,
+		})
 	}
 	w.setEtherbase(testBankAddress)
 	// enable empty blocks
