@@ -81,7 +81,7 @@ type Miner struct {
 	exitCh  chan struct{}
 	startCh chan struct{}
 	stopCh  chan chan struct{}
-	worker  *worker
+	worker  *multiWorker
 
 	wg sync.WaitGroup
 }
@@ -94,7 +94,7 @@ func New(eth Backend, config *Config, chainConfig *params.ChainConfig, mux *even
 		exitCh:  make(chan struct{}),
 		stopCh:  make(chan chan struct{}),
 		startCh: make(chan struct{}),
-		worker:  newWorker(config, chainConfig, engine, eth, mux, isLocalBlock, true),
+		worker:  newMultiWorker(config, chainConfig, engine, eth, mux, isLocalBlock, true),
 	}
 	miner.wg.Add(1)
 
@@ -103,7 +103,7 @@ func New(eth Backend, config *Config, chainConfig *params.ChainConfig, mux *even
 	return miner
 }
 
-func (miner *Miner) GetWorker() *worker {
+func (miner *Miner) GetWorker() *multiWorker {
 	return miner.worker
 }
 
@@ -147,7 +147,7 @@ func (miner *Miner) update() {
 
 					log.Info("Mining aborted due to sync")
 				}
-				miner.worker.syncing.Store(true)
+				miner.worker.regularWorker.syncing.Store(true)
 
 			case downloader.FailedEvent:
 				canStart = true
@@ -155,7 +155,7 @@ func (miner *Miner) update() {
 				if shouldStart {
 					miner.worker.start()
 				}
-				miner.worker.syncing.Store(false)
+				miner.worker.regularWorker.syncing.Store(false)
 
 			case downloader.DoneEvent:
 				canStart = true
@@ -163,7 +163,7 @@ func (miner *Miner) update() {
 				if shouldStart {
 					miner.worker.start()
 				}
-				miner.worker.syncing.Store(false)
+				miner.worker.regularWorker.syncing.Store(false)
 
 				// Stop reacting to downloader events
 				events.Unsubscribe()
@@ -229,7 +229,7 @@ func (miner *Miner) SetRecommitInterval(interval time.Duration) {
 // Pending returns the currently pending block and associated state. The returned
 // values can be nil in case the pending block is not initialized
 func (miner *Miner) Pending() (*types.Block, *state.StateDB) {
-	return miner.worker.pending()
+	return miner.worker.regularWorker.pending()
 }
 
 // PendingBlock returns the currently pending block. The returned block can be
@@ -239,7 +239,7 @@ func (miner *Miner) Pending() (*types.Block, *state.StateDB) {
 // simultaneously, please use Pending(), as the pending state can
 // change between multiple method calls
 func (miner *Miner) PendingBlock() *types.Block {
-	return miner.worker.pendingBlock()
+	return miner.worker.regularWorker.pendingBlock()
 }
 
 // PendingBlockAndReceipts returns the currently pending block and corresponding receipts.
@@ -261,10 +261,10 @@ func (miner *Miner) SetGasCeil(ceil uint64) {
 // SubscribePendingLogs starts delivering logs from pending transactions
 // to the given channel.
 func (miner *Miner) SubscribePendingLogs(ch chan<- []*types.Log) event.Subscription {
-	return miner.worker.pendingLogsFeed.Subscribe(ch)
+	return miner.worker.regularWorker.pendingLogsFeed.Subscribe(ch)
 }
 
 // BuildPayload builds the payload according to the provided parameters.
 func (miner *Miner) BuildPayload(args *BuildPayloadArgs) (*Payload, error) {
-	return miner.worker.buildPayload(args)
+	return miner.worker.regularWorker.buildPayload(args)
 }
