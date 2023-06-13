@@ -253,10 +253,16 @@ func NewTestWorker(t TensingObject, chainConfig *params.ChainConfig, engine cons
 
 	if delay != 0 || opcodeDelay != 0 {
 		//nolint:staticcheck
-		w = newWorkerWithDelay(testConfig, chainConfig, engine, backend, new(event.TypeMux), nil, false, delay, opcodeDelay)
+		w = newWorkerWithDelay(testConfig, chainConfig, engine, backend, new(event.TypeMux), nil, false, delay, opcodeDelay, &flashbotsData{
+			isFlashbots: false,
+			queue:       nil,
+		})
 	} else {
 		//nolint:staticcheck
-		w = newWorker(testConfig, chainConfig, engine, backend, new(event.TypeMux), nil, false)
+		w = newWorker(testConfig, chainConfig, engine, backend, new(event.TypeMux), nil, false, &flashbotsData{
+			isFlashbots: false,
+			queue:       nil,
+		})
 	}
 
 	w.setEtherbase(TestBankAddress)
@@ -269,7 +275,30 @@ func NewTestWorker(t TensingObject, chainConfig *params.ChainConfig, engine cons
 
 // newWorkerWithDelay is newWorker() with extra params to induce artficial delays for tests such as commit-interrupt.
 // nolint:staticcheck
-func newWorkerWithDelay(config *Config, chainConfig *params.ChainConfig, engine consensus.Engine, eth Backend, mux *event.TypeMux, isLocalBlock func(header *types.Header) bool, init bool, delay uint, opcodeDelay uint) *worker {
+func newWorkerWithDelay(config *Config, chainConfig *params.ChainConfig, engine consensus.Engine, eth Backend, mux *event.TypeMux, isLocalBlock func(header *types.Header) bool, init bool, delay uint, opcodeDelay uint, flashbots *flashbotsData) *worker {
+	exitCh := make(chan struct{})
+	taskCh := make(chan *task)
+	if flashbots.isFlashbots {
+		// publish to the flashbots queue
+		taskCh = flashbots.queue
+	} else {
+		// read from the flashbots queue
+		go func() {
+			for {
+				select {
+				case flashbotsTask := <-flashbots.queue:
+					select {
+					case taskCh <- flashbotsTask:
+					case <-exitCh:
+						return
+					}
+				case <-exitCh:
+					return
+				}
+			}
+		}()
+	}
+
 	worker := &worker{
 		config:              config,
 		chainConfig:         chainConfig,
@@ -287,13 +316,14 @@ func newWorkerWithDelay(config *Config, chainConfig *params.ChainConfig, engine 
 		chainSideCh:         make(chan core.ChainSideEvent, chainSideChanSize),
 		newWorkCh:           make(chan *newWorkReq),
 		getWorkCh:           make(chan *getWorkReq),
-		taskCh:              make(chan *task),
+		taskCh:              taskCh,
 		resultCh:            make(chan *types.Block, resultQueueSize),
-		exitCh:              make(chan struct{}),
+		exitCh:              exitCh,
 		startCh:             make(chan struct{}, 1),
 		resubmitIntervalCh:  make(chan time.Duration),
 		resubmitAdjustCh:    make(chan *intervalAdjust, resubmitAdjustChanSize),
 		interruptCommitFlag: config.CommitInterruptFlag,
+		flashbots:           flashbots,
 	}
 	worker.noempty.Store(true)
 	worker.profileCount = new(int32)
@@ -325,12 +355,17 @@ func newWorkerWithDelay(config *Config, chainConfig *params.ChainConfig, engine 
 
 	ctx := tracing.WithTracer(context.Background(), otel.GetTracerProvider().Tracer("MinerWorker"))
 
-	worker.wg.Add(4)
+	// only two tasks run always, other two conditional
+	worker.wg.Add(2)
 
 	go worker.mainLoopWithDelay(ctx, delay, opcodeDelay)
 	go worker.newWorkLoop(ctx, recommit)
-	go worker.resultLoop()
-	go worker.taskLoop()
+	if !flashbots.isFlashbots {
+		// only mine if not flashbots
+		worker.wg.Add(2)
+		go worker.resultLoop()
+		go worker.taskLoop()
+	}
 
 	// Submit first work to initialize pending state.
 	if init {
