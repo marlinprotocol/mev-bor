@@ -564,12 +564,14 @@ func (w *worker) newWorkLoop(ctx context.Context, recommit time.Duration) {
 	for {
 		select {
 		case <-w.startCh:
+			log.Info("newWorkLoop startCh")
 			clearPending(w.chain.CurrentBlock().Number.Uint64())
 
 			timestamp = time.Now().Unix()
 			commit(false, commitInterruptNewHead)
 
 		case head := <-w.chainHeadCh:
+			log.Info("newWorkLoop chainHeadCh")
 			clearPending(head.Block.NumberU64())
 
 			timestamp = time.Now().Unix()
@@ -619,6 +621,7 @@ func (w *worker) newWorkLoop(ctx context.Context, recommit time.Duration) {
 			}
 
 		case <-w.exitCh:
+			log.Info("newWorkLoop exitCh")
 			return
 		}
 	}
@@ -637,10 +640,12 @@ func (w *worker) mainLoop(ctx context.Context) {
 			w.current.discard()
 		}
 	}()
+	defer log.Info("mainLoop exit")
 
 	for {
 		select {
 		case req := <-w.newWorkCh:
+			log.Info("new work")
 			if w.chainConfig.ChainID.Cmp(params.BorMainnetChainConfig.ChainID) == 0 || w.chainConfig.ChainID.Cmp(params.MumbaiChainConfig.ChainID) == 0 {
 				if w.eth.PeerCount() > 0 {
 					//nolint:contextcheck
@@ -793,10 +798,13 @@ func (w *worker) resultLoop() {
 		case block := <-w.resultCh:
 			// Short circuit when receiving empty result.
 			if block == nil {
+				log.Info("empty short circuit")
 				continue
 			}
+			log.Info("new result", "number", block.NumberU64(), "hash", block.Hash())
 			// Short circuit when receiving duplicate result caused by resubmitting.
 			if w.chain.HasBlock(block.Hash(), block.NumberU64()) {
+				log.Info("duplicate short circuit")
 				continue
 			}
 
@@ -1633,7 +1641,7 @@ func (w *worker) fillTransactions(ctx context.Context, interrupt *atomic.Int32, 
 			log.Error("Failed to generate flashbots bundle", "err", err)
 			return err
 		}
-		log.Info("Flashbots bundle", "ethToCoinbase", bundle.totalEth, "gasUsed", bundle.totalGasUsed, "bundleScore", bundle.mevGasPrice, "bundleLength", len(bundleTxs), "numBundles", numBundles, "worker", w.flashbots.maxMergedBundles)
+		log.Info("Flashbots bundle", "number", env.header.Number, "hash", env.header.Hash().String(), "ethToCoinbase", bundle.totalEth, "gasUsed", bundle.totalGasUsed, "bundleScore", bundle.mevGasPrice, "bundleLength", len(bundleTxs), "numBundles", numBundles, "worker", w.flashbots.maxMergedBundles)
 		if len(bundleTxs) == 0 {
 			return nil
 		}
@@ -1778,6 +1786,7 @@ func (w *worker) commitWork(ctx context.Context, interrupt *atomic.Int32, noempt
 	})
 
 	if err != nil {
+		log.Error("commitWork", "error", err)
 		return
 	}
 
