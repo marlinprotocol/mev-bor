@@ -564,14 +564,14 @@ func (w *worker) newWorkLoop(ctx context.Context, recommit time.Duration) {
 	for {
 		select {
 		case <-w.startCh:
-			log.Info("newWorkLoop startCh")
+			log.Info("newWorkLoop startCh", "worker", w.flashbots.maxMergedBundles)
 			clearPending(w.chain.CurrentBlock().Number.Uint64())
 
 			timestamp = time.Now().Unix()
 			commit(false, commitInterruptNewHead)
 
 		case head := <-w.chainHeadCh:
-			log.Info("newWorkLoop chainHeadCh")
+			log.Info("newWorkLoop chainHeadCh", "worker", w.flashbots.maxMergedBundles)
 			clearPending(head.Block.NumberU64())
 
 			timestamp = time.Now().Unix()
@@ -621,7 +621,7 @@ func (w *worker) newWorkLoop(ctx context.Context, recommit time.Duration) {
 			}
 
 		case <-w.exitCh:
-			log.Info("newWorkLoop exitCh")
+			log.Info("newWorkLoop exitCh", "worker", w.flashbots.maxMergedBundles)
 			return
 		}
 	}
@@ -640,12 +640,12 @@ func (w *worker) mainLoop(ctx context.Context) {
 			w.current.discard()
 		}
 	}()
-	defer log.Info("mainLoop exit")
+	defer log.Info("mainLoop exit", "worker", w.flashbots.maxMergedBundles)
 
 	for {
 		select {
 		case req := <-w.newWorkCh:
-			log.Info("new work")
+			log.Info("new work", "worker", w.flashbots.maxMergedBundles)
 			if w.chainConfig.ChainID.Cmp(params.BorMainnetChainConfig.ChainID) == 0 || w.chainConfig.ChainID.Cmp(params.MumbaiChainConfig.ChainID) == 0 {
 				if w.eth.PeerCount() > 0 {
 					//nolint:contextcheck
@@ -742,6 +742,7 @@ func (w *worker) taskLoop() {
 	for {
 		select {
 		case task := <-w.taskCh:
+			log.Info("new task", "worker", w.flashbots.maxMergedBundles, "blockNumber", task.block.Number())
 			if w.newTaskHook != nil {
 				w.newTaskHook(task)
 			}
@@ -765,7 +766,7 @@ func (w *worker) taskLoop() {
 
 			stopCh, prev = make(chan struct{}), sealHash
 
-			log.Info("Proposed miner block", "blockNumber", task.block.Number(), "profit", prevProfit, "isFlashbots", task.isFlashbots, "sealhash", sealHash, "parentHash", prevParentHash, "worker", task.worker)
+			log.Info("Proposed miner block", "worker", w.flashbots.maxMergedBundles, "blockNumber", task.block.Number(), "profit", prevProfit, "isFlashbots", task.isFlashbots, "sealhash", sealHash, "parentHash", prevParentHash, "worker", task.worker)
 
 			if w.skipSealHook != nil && w.skipSealHook(task) {
 				continue
@@ -801,7 +802,7 @@ func (w *worker) resultLoop() {
 				log.Info("empty short circuit")
 				continue
 			}
-			log.Info("new result", "number", block.NumberU64(), "hash", block.Hash())
+			log.Info("new result", "worker", w.flashbots.maxMergedBundles, "number", block.NumberU64(), "hash", block.Hash())
 			// Short circuit when receiving duplicate result caused by resubmitting.
 			if w.chain.HasBlock(block.Hash(), block.NumberU64()) {
 				log.Info("duplicate short circuit")
@@ -1757,6 +1758,7 @@ func (w *worker) generateWork(ctx context.Context, params *generateParams) (*typ
 // commitWork generates several new sealing tasks based on the parent block
 // and submit them to the sealer.
 func (w *worker) commitWork(ctx context.Context, interrupt *atomic.Int32, noempty bool, timestamp int64) {
+	log.Info("commitWork", "worker", w.flashbots.maxMergedBundles)
 	// Abort committing if node is still syncing
 	if w.syncing.Load() {
 		return
